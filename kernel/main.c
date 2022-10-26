@@ -10,6 +10,8 @@ volatile static int started = 0;
 void
 main()
 {
+
+  policy = SCHED_PREEMPT_RR;
   if(cpuid() == 0){
     consoleinit();
     printfinit();

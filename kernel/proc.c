@@ -7,6 +7,8 @@
 #include "defs.h"
 #include "procstat.h"
 
+int policy;
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -557,6 +559,70 @@ scheduler(void)
   c->proc = 0;
   for(;;){
     switch(policy){
+
+      case SCHED_NPREEMPT_FCFS:
+      // new attempt:
+        // Avoid deadlock by ensuring that devices can interrupt.
+          intr_on();
+
+          for(p = proc; p < &proc[NPROC]; p++) {
+            if(policy != SCHED_NPREEMPT_FCFS) break;
+            acquire(&p->lock);
+            if(p->state == RUNNABLE) {
+              // printf("\n pid: %d", p->pid);
+              // Switch to chosen process.  It is the process's job
+              // to release its lock and then reacquire it
+              // before jumping back to us.
+              p->state = RUNNING;
+              c->proc = p;
+              swtch(&c->context, &p->context);
+
+              // Process is done running for now.
+              // It should have changed its p->state before coming back.
+              c->proc = 0;
+            }
+            release(&p->lock);
+          }
+        break;
+
+/// ---------------------------------------------------------
+      // yday attempt
+        //   // Avoid deadlock by ensuring that devices can interrupt.
+        //   intr_on();
+
+        //   for(p = proc; p < &proc[NPROC]; p++) {
+        //     acquire(&p->lock);
+        //     if(p->state == RUNNABLE){
+        //       if(first_p !=0 && p->ctime < first_p->ctime){
+        //         first_p = p;
+        //       }
+        //       if(first_p==0) first_p = p;
+        //     release(&p->lock);
+        //     }
+        //   }
+
+        //   if(first_p!=0){
+        //     // acquire(&first_p->lock);
+        //     first_p->state = RUNNING;
+        //     c->proc = first_p;
+        //     swtch(&c->context, &p->context);
+
+        //     // Process is done running for now.
+        //     // It should have changed its p->state before coming back.
+        //     c->proc = 0;
+        //     // release(&first_p->lock);
+        //   }
+        // break;
+/// ---------------------------------------------------------
+
+      case SCHED_NPREEMPT_SJF:
+        while(1) policy = SCHED_NPREEMPT_SJF;
+        break;
+
+      case SCHED_PREEMPT_UNIX:
+        while(1) policy = SCHED_PREEMPT_UNIX;
+        break;
+
       default:
           // Avoid deadlock by ensuring that devices can interrupt.
           intr_on();
@@ -578,68 +644,6 @@ scheduler(void)
             }
             release(&p->lock);
           }
-        break;
-
-      case SCHED_NPREEMPT_FCFS:
-      // new attempt:
-        // Avoid deadlock by ensuring that devices can interrupt.
-          intr_on();
-
-          for(p = proc; p < &proc[NPROC]; p++) {
-            if(policy != SCHED_PREEMPT_RR) break;
-            acquire(&p->lock);
-            if(p->state == RUNNABLE) {
-              // Switch to chosen process.  It is the process's job
-              // to release its lock and then reacquire it
-              // before jumping back to us.
-              p->state = RUNNING;
-              c->proc = p;
-              swtch(&c->context, &p->context);
-
-              // Process is done running for now.
-              // It should have changed its p->state before coming back.
-              c->proc = 0;
-            }
-            release(&p->lock);
-          }
-        break;
-
-/// ---------------------------------------------------------
-      // yday attempt
-          // // Avoid deadlock by ensuring that devices can interrupt.
-          // intr_on();
-
-          // for(p = proc; p < &proc[NPROC]; p++) {
-          //   acquire(&p->lock);
-          //   if(p->state == RUNNABLE){
-          //     if(first_p !=0 && p->ctime < first_p->ctime){
-          //       first_p = p;
-          //     }
-          //     if(first_p==0) first_p = p;
-          //   release(&p->lock);
-          //   }
-          // }
-
-          // if(first_p!=0){
-          //   // acquire(&first_p->lock);
-          //   first_p->state = RUNNING;
-          //   c->proc = first_p;
-          //   swtch(&c->context, &p->context);
-
-          //   // Process is done running for now.
-          //   // It should have changed its p->state before coming back.
-          //   c->proc = 0;
-          //   // release(&first_p->lock);
-          // }
-        // break;
-/// ---------------------------------------------------------
-
-      case SCHED_NPREEMPT_SJF:
-        while(1) policy = SCHED_NPREEMPT_SJF;
-        break;
-
-      case SCHED_PREEMPT_UNIX:
-        while(1) policy = SCHED_PREEMPT_UNIX;
         break;
     }
   }

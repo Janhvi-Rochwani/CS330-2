@@ -178,5 +178,6 @@ uint64
 sys_schedpolicy(void){
   int x;
   if(argint(0, &x) < 0) return -1;
+  // printf("\n new policy is: %d\n", x);
   return schedpolicy(x);
 } 

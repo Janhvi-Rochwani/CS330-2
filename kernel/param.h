@@ -20,4 +20,4 @@
 #define SCHED_PREEMPT_RR 2
 #define SCHED_PREEMPT_UNIX 3
 
-volatile static int policy = SCHED_PREEMPT_RR;
+extern int policy;
