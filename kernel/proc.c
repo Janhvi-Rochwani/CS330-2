@@ -8,6 +8,8 @@
 #include "procstat.h"
 
 int policy;
+int batch_sz=0, batch_end=0, batch_start=0;
+int count=0, count_flag=0;
 
 struct cpu cpus[NCPU];
 
@@ -300,6 +302,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->priority_value = DEFAULT_PRIORITY_VALUE;
+  np->is_batch = 0;
+  np->cpu_usage = 0;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -349,6 +354,9 @@ forkf(uint64 faddr)
     return -1;
   }
   np->sz = p->sz;
+  np->priority_value = DEFAULT_PRIORITY_VALUE;
+  np->is_batch = 0;
+  np->cpu_usage = 0;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -442,6 +450,21 @@ exit(int status)
   release(&tickslock);
 
   p->endtime = xticks;
+  if(p->is_batch){
+    count++;
+    if(count==batch_sz){
+      uint xticks;
+      if (!holding(&tickslock)) {
+         acquire(&tickslock);
+         xticks = ticks;
+         release(&tickslock);
+      }
+      else xticks = ticks;
+      batch_end = xticks;
+      printf("Batch execution time: %d\n", batch_end-batch_start);
+      count=0; count_flag=0;
+    }
+  }
 
   // Jump into the scheduler, never to return.
   sched();
@@ -553,99 +576,145 @@ void
 scheduler(void)
 {
   struct proc *p;
-  // struct proc *first_p = 0;
+  struct proc *min_p = proc;
   struct cpu *c = mycpu();
-      
+  int min_priority = -1;
+  // int non_batch_flag=0;
+
   c->proc = 0;
   for(;;){
     switch(policy){
 
       case SCHED_NPREEMPT_FCFS:
-      // new attempt:
         // Avoid deadlock by ensuring that devices can interrupt.
-          intr_on();
+        intr_on();
 
-          for(p = proc; p < &proc[NPROC]; p++) {
-            if(policy != SCHED_NPREEMPT_FCFS) break;
-            acquire(&p->lock);
-            if(p->state == RUNNABLE) {
-              // printf("\n pid: %d", p->pid);
-              // Switch to chosen process.  It is the process's job
-              // to release its lock and then reacquire it
-              // before jumping back to us.
-              p->state = RUNNING;
-              c->proc = p;
-              swtch(&c->context, &p->context);
-
-              // Process is done running for now.
-              // It should have changed its p->state before coming back.
-              c->proc = 0;
+        for(p = proc; p < &proc[NPROC]; p++) {
+          if(policy != SCHED_NPREEMPT_FCFS) break;
+          acquire(&p->lock);
+          if(p->state == RUNNABLE) {
+            if(p->is_batch && count_flag==0){
+              uint xticks;
+              if (!holding(&tickslock)) {
+                 acquire(&tickslock);
+                 xticks = ticks;
+                 release(&tickslock);
+              }
+              else xticks = ticks;
+              batch_start = xticks;
+              count_flag = 1;
             }
-            release(&p->lock);
+            // Switch to chosen process.  It is the process's job
+            // to release its lock and then reacquire it
+            // before jumping back to us.
+            
+            p->state = RUNNING;
+            c->proc = p;
+            swtch(&c->context, &p->context);
+
+            // Process is done running for now.
+            // It should have changed its p->state before coming back.
+            c->proc = 0;
           }
+          release(&p->lock);
+        }
         break;
 
-/// ---------------------------------------------------------
-      // yday attempt
-        //   // Avoid deadlock by ensuring that devices can interrupt.
-        //   intr_on();
+      case SCHED_PREEMPT_RR:
+        // Avoid deadlock by ensuring that devices can interrupt.
+        intr_on();
 
-        //   for(p = proc; p < &proc[NPROC]; p++) {
-        //     acquire(&p->lock);
-        //     if(p->state == RUNNABLE){
-        //       if(first_p !=0 && p->ctime < first_p->ctime){
-        //         first_p = p;
-        //       }
-        //       if(first_p==0) first_p = p;
-        //     release(&p->lock);
-        //     }
-        //   }
+        for(p = proc; p < &proc[NPROC]; p++) {
+          if(policy != SCHED_PREEMPT_RR) break;
+          acquire(&p->lock);
+          if(p->state == RUNNABLE) {
+            // Switch to chosen process.  It is the process's job
+            // to release its lock and then reacquire it
+            // before jumping back to us.
+            if(p->is_batch && count_flag==0){
+              uint xticks;
+              if (!holding(&tickslock)) {
+                 acquire(&tickslock);
+                 xticks = ticks;
+                 release(&tickslock);
+              }
+              else xticks = ticks;
+              batch_start = xticks;
+              count_flag = 1;
+            }
+            p->state = RUNNING;
+            c->proc = p;
+            swtch(&c->context, &p->context);
 
-        //   if(first_p!=0){
-        //     // acquire(&first_p->lock);
-        //     first_p->state = RUNNING;
-        //     c->proc = first_p;
-        //     swtch(&c->context, &p->context);
-
-        //     // Process is done running for now.
-        //     // It should have changed its p->state before coming back.
-        //     c->proc = 0;
-        //     // release(&first_p->lock);
-        //   }
-        // break;
-/// ---------------------------------------------------------
+            // Process is done running for now.
+            // It should have changed its p->state before coming back.
+            c->proc = 0;
+          }
+          release(&p->lock);
+        }
+        break;
 
       case SCHED_NPREEMPT_SJF:
-        while(1) policy = SCHED_NPREEMPT_SJF;
+        printf("SJF not implemented. Please use FCFS, RR, or UNIX\n");
         break;
 
       case SCHED_PREEMPT_UNIX:
-        while(1) policy = SCHED_PREEMPT_UNIX;
+        intr_on();
+        min_priority = -1;
+        for(p = proc; p<&proc[NPROC]; p++){
+          if(policy != SCHED_PREEMPT_UNIX) break;
+          acquire(&p->lock);
+          if(p->state == RUNNABLE){
+            if(p->is_batch && count_flag==0){
+              uint xticks;
+              if (!holding(&tickslock)) {
+                 acquire(&tickslock);
+                 xticks = ticks;
+                 release(&tickslock);
+              }
+              else xticks = ticks;
+              batch_start = xticks;
+              count_flag = 1;
+            }
+            if(!p->is_batch){
+              p->state=RUNNING;
+              c->proc = p;
+              swtch(&c->context, &p->context);
+              c->proc=0;
+              release(&p->lock);
+              // non_batch_flag=1;
+              break;
+            }
+            p->cpu_usage = p->cpu_usage/2;
+            p->dyn_priority = p->priority_value + p->cpu_usage/2;
+            if(min_priority == -1 || min_priority > p->dyn_priority){
+              min_p = p;
+              min_priority = p->dyn_priority;
+            }
+          }
+          release(&p->lock);
+        }
+        // if(non_batch_flag) break;
+
+        acquire(&min_p->lock);
+        min_p->state=RUNNING;
+        c->proc=min_p;
+        swtch(&c->context, &min_p->context);
+        if(min_p->state==RUNNABLE){
+          min_p->cpu_usage+=SCHED_PARAM_CPU_USAGE;
+        }
+        else if(min_p->state==SLEEPING){
+          min_p->cpu_usage+=SCHED_PARAM_CPU_USAGE/2;
+        }
+        
+        c->proc = 0;
+        release(&min_p->lock);
         break;
 
       default:
-          // Avoid deadlock by ensuring that devices can interrupt.
-          intr_on();
-
-          for(p = proc; p < &proc[NPROC]; p++) {
-            if(policy != SCHED_PREEMPT_RR) break;
-            acquire(&p->lock);
-            if(p->state == RUNNABLE) {
-              // Switch to chosen process.  It is the process's job
-              // to release its lock and then reacquire it
-              // before jumping back to us.
-              p->state = RUNNING;
-              c->proc = p;
-              swtch(&c->context, &p->context);
-
-              // Process is done running for now.
-              // It should have changed its p->state before coming back.
-              c->proc = 0;
-            }
-            release(&p->lock);
-          }
         break;
     }
+
   }
 }
 
@@ -986,6 +1055,8 @@ forkp(int priority_value)
   }
   np->sz = p->sz;
   np->priority_value = priority_value;    // setting priority value equal to the value passed in forkp() call
+  np->is_batch = 1;
+  np->cpu_usage = 0;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -1007,17 +1078,15 @@ forkp(int priority_value)
 
   acquire(&wait_lock);
   np->parent = p;
-  // printf("%d", p->priority_value);
   release(&wait_lock);
 
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
-  
-  // printf("%d : pri val\n", priority_value);
+
+  batch_sz+=1;
 
   return pid;
-
 }
 
 int
